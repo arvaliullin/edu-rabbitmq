@@ -1,3 +1,27 @@
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+  interval: 5s
+  timeout: 15s
+  retries: 20
+  start_period: 120s
+
+x-cluster-join: &cluster-join |
+  set -e
+  exec gosu rabbitmq bash -lc '
+    set -e
+    rabbitmq-server -detached
+    n=0
+    until rabbitmqctl ping >/dev/null 2>&1; do
+      n=$$((n + 1))
+      if [ "$$n" -gt 120 ]; then echo "timeout waiting for local node"; exit 1; fi
+      sleep 0.5
+    done
+    rabbitmqctl stop_app
+    rabbitmqctl join_cluster rabbit@rabbit1
+    rabbitmqctl start_app
+    tail -f /dev/null
+  '
+
 services:
   rabbit1:
     image: rabbitmq:3.12-management
@@ -11,52 +35,56 @@ services:
       - "15672:15672"
     volumes:
       - rabbit1_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
 
   rabbit2:
     image: rabbitmq:3.12-management
     hostname: rabbit2
     container_name: rabbit2
     depends_on:
-      - rabbit1
+      rabbit1:
+        condition: service_healthy
     environment:
       RABBITMQ_ERLANG_COOKIE: "supersecretcookie"
       RABBITMQ_NODENAME: "rabbit@rabbit2"
     ports:
       - "5673:5672"     # AMQP второго узла
       - "15673:15672"   # панель второго узла
-    command: >
-      bash -lc "
-        rabbitmq-server -detached && \
-        rabbitmqctl stop_app && \
-        rabbitmqctl join_cluster rabbit@rabbit1 && \
-        rabbitmqctl start_app && \
-        tail -f /var/log/rabbitmq/*.log
-      "
+    command:
+      - bash
+      - -c
+      - *cluster-join
     volumes:
       - rabbit2_data:/var/lib/rabbitmq
+    healthcheck: *node-healthcheck
 
   rabbit3:
     image: rabbitmq:3.12-management
     hostname: rabbit3
     container_name: rabbit3
     depends_on:
-      - rabbit1
+      rabbit1:
+        condition: service_healthy
+      rabbit2:
+        condition: service_healthy
     environment:
       RABBITMQ_ERLANG_COOKIE: "supersecretcookie"
       RABBITMQ_NODENAME: "rabbit@rabbit3"
     ports:
       - "5674:5672"     # AMQP третьего узла
       - "15674:15672"   # панель третьего узла
-    command: >
-      bash -lc "
-        rabbitmq-server -detached && \
-        rabbitmqctl stop_app && \
-        rabbitmqctl join_cluster rabbit@rabbit1 && \
-        rabbitmqctl start_app && \
-        tail -f /var/log/rabbitmq/*.log
-      "
+    command:
+      - bash
+      - -c
+      - *cluster-join
     volumes:
       - rabbit3_data:/var/lib/rabbitmq
+    healthcheck: *node-healthcheck
 
 volumes:
   rabbit1_data:
