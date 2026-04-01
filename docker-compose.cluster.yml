@@ -1,0 +1,64 @@
+services:
+  rabbit1:
+    image: rabbitmq:3.12-management
+    hostname: rabbit1
+    container_name: rabbit1
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "supersecretcookie"
+      RABBITMQ_NODENAME: "rabbit@rabbit1"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbit1_data:/var/lib/rabbitmq
+
+  rabbit2:
+    image: rabbitmq:3.12-management
+    hostname: rabbit2
+    container_name: rabbit2
+    depends_on:
+      - rabbit1
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "supersecretcookie"
+      RABBITMQ_NODENAME: "rabbit@rabbit2"
+    ports:
+      - "5673:5672"     # AMQP второго узла
+      - "15673:15672"   # панель второго узла
+    command: >
+      bash -lc "
+        rabbitmq-server -detached && \
+        rabbitmqctl stop_app && \
+        rabbitmqctl join_cluster rabbit@rabbit1 && \
+        rabbitmqctl start_app && \
+        tail -f /var/log/rabbitmq/*.log
+      "
+    volumes:
+      - rabbit2_data:/var/lib/rabbitmq
+
+  rabbit3:
+    image: rabbitmq:3.12-management
+    hostname: rabbit3
+    container_name: rabbit3
+    depends_on:
+      - rabbit1
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "supersecretcookie"
+      RABBITMQ_NODENAME: "rabbit@rabbit3"
+    ports:
+      - "5674:5672"     # AMQP третьего узла
+      - "15674:15672"   # панель третьего узла
+    command: >
+      bash -lc "
+        rabbitmq-server -detached && \
+        rabbitmqctl stop_app && \
+        rabbitmqctl join_cluster rabbit@rabbit1 && \
+        rabbitmqctl start_app && \
+        tail -f /var/log/rabbitmq/*.log
+      "
+    volumes:
+      - rabbit3_data:/var/lib/rabbitmq
+
+volumes:
+  rabbit1_data:
+  rabbit2_data:
+  rabbit3_data:
